@@ -9,8 +9,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from model import *
 from utils import *
+
+from gcn import GCN
 
 # Training settings
 parser = argparse.ArgumentParser()
@@ -30,15 +31,9 @@ parser.add_argument('--dropout', type=float, default=0.6,
 parser.add_argument('--patience', type=int, default=200, help='Patience')
 parser.add_argument('--data', default='cora', help='dateset')
 parser.add_argument('--dev', type=int, default=0, help='device id')
-parser.add_argument('--alpha', type=float, default=0.1, help='alpha_l')
-parser.add_argument('--lamda', type=float, default=0.5, help='lamda.')
-parser.add_argument('--variant', action='store_true',
-                    default=False, help='GCN* model.')
 parser.add_argument('--test', action='store_true',
                     default=False, help='evaluation on test set.')
-parser.add_argument('--batchnorm', action='store_true',
-                    default=False, help='batch normalization')
-
+parser.add_argument('--batchnorm', action='store_true')
 args = parser.parse_args()
 random.seed(args.seed)
 np.random.seed(args.seed)
@@ -55,15 +50,12 @@ adj = adj.to(device)
 checkpt_file = 'pretrained/'+uuid.uuid4().hex+'.pt'
 print(cudaid, checkpt_file)
 
-model = GCNII(nfeat=features.shape[1],
-              nlayers=args.layer,
-              nhidden=args.hidden,
-              nclass=int(labels.max()) + 1,
-              dropout=args.dropout,
-              lamda=args.lamda,
-              alpha=args.alpha,
-              variant=args.variant,
-              batchnorm=args.batchnorm).to(device)
+model = GCN(nfeat=features.shape[1],
+            nlayers=args.layer,
+            nhidden=args.hidden,
+            nclass=int(labels.max()) + 1,
+            dropout=args.dropout,
+            batch_norm=args.batchnorm)
 
 
 optimizer = optim.Adam([

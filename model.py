@@ -1,49 +1,54 @@
-import torch.nn as nn
-import torch
 import math
+
 import numpy as np
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
+
 
 class GraphConvolution(nn.Module):
 
     def __init__(self, in_features, out_features, residual=False, variant=False):
-        super(GraphConvolution, self).__init__() 
+        super(GraphConvolution, self).__init__()
         self.variant = variant
         if self.variant:
-            self.in_features = 2*in_features 
+            self.in_features = 2*in_features
         else:
             self.in_features = in_features
 
         self.out_features = out_features
         self.residual = residual
-        self.weight = Parameter(torch.FloatTensor(self.in_features,self.out_features))
+        self.weight = Parameter(torch.FloatTensor(
+            self.in_features, self.out_features))
         self.reset_parameters()
 
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.out_features)
         self.weight.data.uniform_(-stdv, stdv)
 
-    def forward(self, input, adj , h0 , lamda, alpha, l):
+    def forward(self, input, adj, h0, lamda, alpha, l):
         theta = math.log(lamda/l+1)
         hi = torch.spmm(adj, input)
         if self.variant:
-            support = torch.cat([hi,h0],1)
+            support = torch.cat([hi, h0], 1)
             r = (1-alpha)*hi+alpha*h0
         else:
-            support = (1-alpha)*hi+alpha*h0
+            support = hi  # (1-alpha)*hi+alpha*h0
             r = support
         output = theta*torch.mm(support, self.weight)+(1-theta)*r
         if self.residual:
             output = output+input
         return output
 
+
 class GCNII(nn.Module):
-    def __init__(self, nfeat, nlayers,nhidden, nclass, dropout, lamda, alpha, variant):
+    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, lamda, alpha, variant, batchnorm):
         super(GCNII, self).__init__()
         self.convs = nn.ModuleList()
         for _ in range(nlayers):
-            self.convs.append(GraphConvolution(nhidden, nhidden,variant=variant))
+            self.convs.append(GraphConvolution(
+                nhidden, nhidden, variant=variant))
         self.fcs = nn.ModuleList()
         self.fcs.append(nn.Linear(nfeat, nhidden))
         self.fcs.append(nn.Linear(nhidden, nclass))
@@ -54,24 +59,47 @@ class GCNII(nn.Module):
         self.alpha = alpha
         self.lamda = lamda
 
+        self.batchnorm = batchnorm
+        if batchnorm:
+            self.init_batchnorm(nlayers, nhidden)
+
+    def init_batchnorm(self, nlayers, nhidden):
+        self.bns = nn.ModuleList()
+        for _ in range(nlayers):
+            self.bns.append(torch.nn.BatchNorm1d(num_features=nhidden))
+        self.first_bn = torch.nn.BatchNorm1d(num_features=nhidden)
+
     def forward(self, x, adj):
         _layers = []
         x = F.dropout(x, self.dropout, training=self.training)
-        layer_inner = self.act_fn(self.fcs[0](x))
+        layer_inner = self.fcs[0](x)
+        if self.batchnorm:
+            layer_inner = self.first_bn(layer_inner)
+        layer_inner = self.act_fn(layer_inner)
+
         _layers.append(layer_inner)
-        for i,con in enumerate(self.convs):
-            layer_inner = F.dropout(layer_inner, self.dropout, training=self.training)
-            layer_inner = self.act_fn(con(layer_inner,adj,_layers[0],self.lamda,self.alpha,i+1))
-        layer_inner = F.dropout(layer_inner, self.dropout, training=self.training)
+        for i, con in enumerate(self.convs):
+            layer_inner = F.dropout(
+                layer_inner, self.dropout, training=self.training)
+            layer_inner = con(layer_inner, adj,
+                              _layers[0], self.lamda, self.alpha, i+1)
+            if self.batchnorm:
+                layer_inner = self.bns[i](layer_inner)
+            layer_inner = self.act_fn(layer_inner)
+
+        layer_inner = F.dropout(
+            layer_inner, self.dropout, training=self.training)
         layer_inner = self.fcs[-1](layer_inner)
         return F.log_softmax(layer_inner, dim=1)
 
+
 class GCNIIppi(nn.Module):
-    def __init__(self, nfeat, nlayers,nhidden, nclass, dropout, lamda, alpha,variant):
+    def __init__(self, nfeat, nlayers, nhidden, nclass, dropout, lamda, alpha, variant):
         super(GCNIIppi, self).__init__()
         self.convs = nn.ModuleList()
         for _ in range(nlayers):
-            self.convs.append(GraphConvolution(nhidden, nhidden,variant=variant,residual=True))
+            self.convs.append(GraphConvolution(
+                nhidden, nhidden, variant=variant, residual=True))
         self.fcs = nn.ModuleList()
         self.fcs.append(nn.Linear(nfeat, nhidden))
         self.fcs.append(nn.Linear(nhidden, nclass))
@@ -86,19 +114,16 @@ class GCNIIppi(nn.Module):
         x = F.dropout(x, self.dropout, training=self.training)
         layer_inner = self.act_fn(self.fcs[0](x))
         _layers.append(layer_inner)
-        for i,con in enumerate(self.convs):
-            layer_inner = F.dropout(layer_inner, self.dropout, training=self.training)
-            layer_inner = self.act_fn(con(layer_inner,adj,_layers[0],self.lamda,self.alpha,i+1))
-        layer_inner = F.dropout(layer_inner, self.dropout, training=self.training)
+        for i, con in enumerate(self.convs):
+            layer_inner = F.dropout(
+                layer_inner, self.dropout, training=self.training)
+            layer_inner = self.act_fn(
+                con(layer_inner, adj, _layers[0], self.lamda, self.alpha, i+1))
+        layer_inner = F.dropout(
+            layer_inner, self.dropout, training=self.training)
         layer_inner = self.sig(self.fcs[-1](layer_inner))
         return layer_inner
 
 
 if __name__ == '__main__':
     pass
-
-
-
-
-
-
